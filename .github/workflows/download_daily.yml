@@ -40,6 +40,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "energy price/"
-          git diff --staged --quiet \
-            && echo "No new files to commit." \
-            || (git commit -m "Auto: ARERA data $(date +%Y-%m-%d)" && git push)
+          if git diff --staged --quiet; then
+            echo "No new files to commit."
+          else
+            # Write timestamp so Streamlit Cloud always detects a change and redeploys
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > last_updated.txt
+            git add last_updated.txt
+            git commit -m "Auto: ARERA data $(date +%Y-%m-%d)"
+            git push
+          fi
