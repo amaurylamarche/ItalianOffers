@@ -1,0 +1,45 @@
+name: Download daily ARERA files
+
+on:
+  schedule:
+    - cron: '0 5 * * *'  # 6am CET / 7am CEST (Italian time)
+  workflow_dispatch:      # allow manual trigger from GitHub UI
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download today's XML and CSV from Portale Offerte
+        run: |
+          DATE=$(date +%Y%m%d)
+          YEAR=$(date +%Y)
+          MONTH=$(date +%-m)   # no leading zero, e.g. 5 not 05
+          BASE="https://www.ilportaleofferte.it/portaleOfferte/resources/opendata"
+
+          XML_URL="${BASE}/csv/offerteML/${YEAR}_${MONTH}/PO_Offerte_E_MLIBERO_${DATE}.xml"
+          CSV_URL="${BASE}/csv/parametriML/${YEAR}_${MONTH}/PO_Parametri_Mercato_Libero_E_${DATE}.csv"
+          DEST="energy price"
+
+          echo "Downloading XML: $XML_URL"
+          curl -f -o "${DEST}/PO_Offerte_E_MLIBERO_${DATE}.xml" "$XML_URL" \
+            && echo "XML saved." \
+            || echo "WARNING: XML not yet available for $DATE"
+
+          echo "Downloading CSV: $CSV_URL"
+          curl -f -o "${DEST}/PO_Parametri_Mercato_Libero_E_${DATE}.csv" "$CSV_URL" \
+            && echo "CSV saved." \
+            || echo "WARNING: CSV not yet available for $DATE"
+
+      - name: Commit and push new files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "energy price/"
+          git diff --staged --quiet \
+            && echo "No new files to commit." \
+            || (git commit -m "Auto: ARERA data $(date +%Y-%m-%d)" && git push)
