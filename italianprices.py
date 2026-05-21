@@ -120,6 +120,12 @@ TRANSLATIONS = {
         "col_fixed_fee2":       "Quota fissa",
         "col_renewable2":       "Rinnovabile",
         "col_access2":          "Accesso",
+        "col_vs_week":          "vs 1 sett.",
+        "col_vs_month":         "vs 1 mese",
+        "price_up":             "↑",
+        "price_down":           "↓",
+        "price_flat":           "→",
+        "no_ref_data":          "—",
         "footer": (
             "**Nota metodologica**: La bolletta stimata include spesa materia energia "
             "(prezzo offerta + dispacciamento CdispD), spesa trasporto e gestione contatore, "
@@ -194,6 +200,12 @@ TRANSLATIONS = {
         "col_fixed_fee2":       "Fixed fee",
         "col_renewable2":       "Renewable",
         "col_access2":          "Access",
+        "col_vs_week":          "vs 1W",
+        "col_vs_month":         "vs 1M",
+        "price_up":             "↑",
+        "price_down":           "↓",
+        "price_flat":           "→",
+        "no_ref_data":          "—",
         "footer": (
             "**Methodology**: The estimated bill includes energy costs (offer price + CdispD dispatch), "
             "transport and metering charges, system charges, excise duty and 10% VAT (domestic residential). "
@@ -514,6 +526,38 @@ def load_price_history() -> pd.DataFrame:
     return pd.DataFrame(records) if records else pd.DataFrame()
 
 
+def _ref_prices(hist_df: pd.DataFrame, ref_date, show_limited: bool, prefer_renewable: bool) -> dict:
+    """Return {competitor: energy_price} for the closest available date <= ref_date."""
+    if hist_df.empty:
+        return {}
+    subset = hist_df[hist_df["date"] <= ref_date]
+    if subset.empty:
+        return {}
+    closest = subset["date"].max()
+    h = subset[subset["date"] == closest].copy()
+    if not show_limited:
+        non_lim = h[h["limitante"] != "01"][["competitor"]].drop_duplicates()
+        non_lim["_nl"] = True
+        h = h.merge(non_lim, on="competitor", how="left")
+        h = h[(h["limitante"] != "01") | h["_nl"].isna()].drop(columns=["_nl"])
+    h_sorted = h.sort_values(["competitor", "renewable", "energy_price"],
+                              ascending=[True, False, True])
+    best = h_sorted.groupby("competitor", as_index=False).first()
+    return dict(zip(best["competitor"], best["energy_price"]))
+
+
+def _fmt_change(current_ep: float, ref: dict, comp: str) -> str:
+    """Format a price change badge relative to a reference price dict."""
+    ref_ep = ref.get(comp)
+    if ref_ep is None:
+        return t("no_ref_data")
+    delta = (current_ep - ref_ep) * 100   # c€/kWh
+    if abs(delta) < 0.001:
+        return t("price_flat")
+    arrow = t("price_up") if delta > 0 else t("price_down")
+    return f"{arrow} {abs(delta):.2f}c"
+
+
 # ── Language state ────────────────────────────────────────────────────────────
 if "lang" not in st.session_state:
     st.session_state.lang = "it"
@@ -680,6 +724,15 @@ with tab1:
     display_df = df_best[
         ["competitor", "nome", "energy_price", "fixed_annual", "total", "renewable", "limitante", "durata"]
     ].copy()
+
+    # Price change vs last week / last month
+    from datetime import timedelta
+    _hist = load_price_history()
+    _week_ref  = _ref_prices(_hist, selected_date - timedelta(days=7),  show_limited, renewable_filter)
+    _month_ref = _ref_prices(_hist, selected_date - timedelta(days=30), show_limited, renewable_filter)
+    display_df["vs_week"]  = display_df.apply(lambda r: _fmt_change(r["energy_price"], _week_ref,  r["competitor"]), axis=1)
+    display_df["vs_month"] = display_df.apply(lambda r: _fmt_change(r["energy_price"], _month_ref, r["competitor"]), axis=1)
+
     ann = t("annual_suffix")
     display_df["energy_price"] = display_df["energy_price"].map(lambda x: f"{x*100:.3f} c€/kWh")
     display_df["fixed_annual"]  = display_df["fixed_annual"].map(lambda x: f"€{x:.0f}{ann}")
@@ -692,6 +745,7 @@ with tab1:
     display_df.columns = [
         t("col_supplier"), t("col_offer"), t("col_energy_price"), t("col_fixed_fee"),
         t("col_bill"), t("col_renewable"), t("col_access"), t("col_duration"),
+        t("col_vs_week"), t("col_vs_month"),
     ]
     st.dataframe(display_df.set_index(t("col_supplier")), width="stretch")
 
