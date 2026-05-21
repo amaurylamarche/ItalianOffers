@@ -23,7 +23,7 @@ st.set_page_config(
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-DATA_DIR = Path(r"C:\Users\HIA415\Sandbox\energy price")
+DATA_DIR = Path(__file__).parent / "energy price"
 NS = {"au": "http://www.acquirenteunico.it/schemas/SII_AU/OffertaRetail/01"}
 
 COMPETITORS = {
