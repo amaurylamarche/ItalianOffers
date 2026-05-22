@@ -2,8 +2,9 @@ name: Download daily ARERA files
 
 on:
   schedule:
-    - cron: '0 5 * * *'  # 6am CET / 7am CEST (Italian time)
-  workflow_dispatch:      # allow manual trigger from GitHub UI
+    - cron: '0 5 * * *'   # 7am CEST — first attempt
+    - cron: '0 10 * * *'  # noon CEST — retry if portal was slow to publish
+  workflow_dispatch:       # allow manual trigger from GitHub UI
 
 jobs:
   download:
