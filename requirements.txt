@@ -3,3 +3,4 @@ entsoe-py>=0.6.8
 plotly>=5.18.0
 pandas>=2.1.0
 python-dotenv>=1.0.0
+anthropic>=0.30.0
