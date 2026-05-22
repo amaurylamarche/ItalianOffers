@@ -126,6 +126,19 @@ TRANSLATIONS = {
         "price_down":           "↓",
         "price_flat":           "→",
         "no_ref_data":          "—",
+        "tab_chat":             "Assistente IA",
+        "chat_subheader":       "Fai una domanda sui prezzi dell'energia",
+        "chat_caption":         "L'assistente analizza i dati ARERA disponibili per rispondere alle tue domande.",
+        "chat_placeholder":     "Es: Quale fornitore ha il prezzo più basso oggi? Come sono cambiati i prezzi nell'ultimo mese?",
+        "chat_no_key":          "⚠️ Chiave API Anthropic non configurata. Aggiungila nei segreti di Streamlit Cloud (`ANTHROPIC_API_KEY`).",
+        "chat_thinking":        "Analisi in corso…",
+        "chat_clear":           "🗑️ Cancella conversazione",
+        "chat_system": (
+            "Sei un esperto del mercato elettrico italiano e un assistente AI specializzato nell'analisi delle offerte "
+            "del mercato libero. Rispondi sempre in italiano, in modo chiaro e diretto. "
+            "Hai accesso ai dati ARERA (Portale Offerte) aggiornati. Usa i dati forniti nel contesto per dare risposte precise. "
+            "Quando parli di prezzi usa il formato c€/kWh o €/anno. Sii conciso ma informativo."
+        ),
         "footer": (
             "**Nota metodologica**: La bolletta stimata include spesa materia energia "
             "(prezzo offerta + dispacciamento CdispD), spesa trasporto e gestione contatore, "
@@ -206,6 +219,19 @@ TRANSLATIONS = {
         "price_down":           "↓",
         "price_flat":           "→",
         "no_ref_data":          "—",
+        "tab_chat":             "AI Assistant",
+        "chat_subheader":       "Ask a question about energy prices",
+        "chat_caption":         "The assistant analyses available ARERA data to answer your questions.",
+        "chat_placeholder":     "E.g. Which supplier has the lowest price today? How have prices changed over the last month?",
+        "chat_no_key":          "⚠️ Anthropic API key not configured. Add it in Streamlit Cloud secrets (`ANTHROPIC_API_KEY`).",
+        "chat_thinking":        "Analysing…",
+        "chat_clear":           "🗑️ Clear conversation",
+        "chat_system": (
+            "You are an expert on the Italian electricity market and an AI assistant specialised in analysing "
+            "free-market offers. Always reply in English, clearly and directly. "
+            "You have access to up-to-date ARERA (Portale Offerte) data. Use the data provided in the context "
+            "to give precise answers. When quoting prices use c€/kWh or €/year. Be concise but informative."
+        ),
         "footer": (
             "**Methodology**: The estimated bill includes energy costs (offer price + CdispD dispatch), "
             "transport and metering charges, system charges, excise duty and 10% VAT (domestic residential). "
@@ -691,7 +717,7 @@ for col, (_, row) in zip(cols, df_best.iterrows()):
 st.divider()
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs([t("tab_ranking"), t("tab_all"), t("tab_history")])
+tab1, tab2, tab3, tab4 = st.tabs([t("tab_ranking"), t("tab_all"), t("tab_history"), t("tab_chat")])
 
 with tab1:
     fig = go.Figure()
@@ -938,6 +964,101 @@ with tab3:
                 .set_index(t("col_supplier"))
                 .sort_values(t("col_energy_price2")),
                 width="stretch",
+            )
+
+with tab4:
+    import anthropic as _anthropic
+
+    st.subheader(t("chat_subheader"))
+    st.caption(t("chat_caption"))
+
+    # ── Build context from current data ───────────────────────────────────────
+    def _build_context() -> str:
+        lines = [f"## Current offers — {selected_date.strftime('%d/%m/%Y')} ({consumption} kWh/yr, {power} kW)\n"]
+        lines.append("| Supplier | Offer | Energy price (c€/kWh) | Annual bill (€) | Renewable |")
+        lines.append("|---|---|---|---|---|")
+        for _, r in df_best.iterrows():
+            ren = "♻ Yes" if r["renewable"] else "No"
+            lines.append(
+                f"| {r['competitor']} | {r['nome'][:40]} "
+                f"| {r['energy_price']*100:.3f} | {r['total']:.0f} | {ren} |"
+            )
+
+        hist = load_price_history()
+        if not hist.empty:
+            from datetime import timedelta as _td
+            cutoff = selected_date - _td(days=60)
+            recent = hist[hist["date"] >= cutoff].copy()
+            if not recent.empty:
+                weekly = (
+                    recent.sort_values(["date", "competitor", "renewable", "energy_price"],
+                                       ascending=[True, True, False, True])
+                    .groupby(["date", "competitor"], as_index=False).first()
+                )
+                pivot = weekly.pivot(index="date", columns="competitor", values="energy_price") * 100
+                lines.append(f"\n## Energy price history — last 60 days (c€/kWh)\n")
+                lines.append(pivot.to_string(float_format=lambda x: f"{x:.3f}"))
+
+        lines.append(f"\n## Regulated parameters (latest)\n")
+        key_params = ["cdispd", "dispbt_d", "asos_dr", "sigma1", "sigma2", "sigma3", "tras", "mis"]
+        for k in key_params:
+            if k in params:
+                lines.append(f"- {k}: {params[k]}")
+
+        return "\n".join(lines)
+
+    # ── Session state ─────────────────────────────────────────────────────────
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    col_clear, _ = st.columns([1, 4])
+    with col_clear:
+        if st.button(t("chat_clear"), use_container_width=True):
+            st.session_state.chat_messages = []
+            st.rerun()
+
+    # Render conversation history
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # ── Handle new input ──────────────────────────────────────────────────────
+    user_input = st.chat_input(t("chat_placeholder"))
+
+    if user_input:
+        api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            st.error(t("chat_no_key"))
+        else:
+            st.session_state.chat_messages.append({"role": "user", "content": user_input})
+            with st.chat_message("user"):
+                st.markdown(user_input)
+
+            context = _build_context()
+            system_prompt = t("chat_system") + "\n\n" + context
+
+            api_messages = [
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state.chat_messages
+            ]
+
+            client = _anthropic.Anthropic(api_key=api_key)
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                response_text = ""
+                with client.messages.stream(
+                    model="claude-sonnet-4-6",
+                    max_tokens=1024,
+                    system=system_prompt,
+                    messages=api_messages,
+                ) as stream:
+                    for chunk in stream.text_stream:
+                        response_text += chunk
+                        placeholder.markdown(response_text + "▌")
+                placeholder.markdown(response_text)
+
+            st.session_state.chat_messages.append(
+                {"role": "assistant", "content": response_text}
             )
 
 # ── Footer ────────────────────────────────────────────────────────────────────
