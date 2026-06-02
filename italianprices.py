@@ -538,8 +538,101 @@ def calculate_bill(offer: dict, consumption: float, power: float, params: dict, 
 
 
 # ── Price history (all dates) ─────────────────────────────────────────────────
+<<<<<<< HEAD
 def _parse_xml_for_history(xml_path: Path, dt, commodity: str, price_type: str) -> list[dict]:
     energy_units = COMMODITY_CONFIG[commodity]["energy_units"]
+=======
+def _parse_xml_for_history(xml_path: Path, dt) -> list[dict]:
+    records = []
+    try:
+        root = ET.parse(xml_path).getroot()
+    except ET.ParseError:
+        return records
+    for offerta in root.findall("au:offerta", NS):
+        piva = offerta.findtext("au:IdentificativiOfferta/au:PIVA_UTENTE", namespaces=NS)
+        if piva not in COMPETITORS:
+            continue
+        tipo_offerta = offerta.findtext("au:DettaglioOfferta/au:TIPO_OFFERTA", namespaces=NS)
+        tipo_cliente = offerta.findtext("au:DettaglioOfferta/au:TIPO_CLIENTE", namespaces=NS)
+        fasce        = offerta.findtext("au:TipoPrezzo/au:TIPOLOGIA_FASCE", namespaces=NS)
+        limitante    = offerta.findtext("au:CondizioniContrattuali/au:LIMITANTE", namespaces=NS) or "02"
+        nome         = offerta.findtext("au:DettaglioOfferta/au:NOME_OFFERTA", namespaces=NS) or ""
+        desc         = offerta.findtext("au:DettaglioOfferta/au:DESCRIZIONE", namespaces=NS) or ""
+        if tipo_offerta != "01" or tipo_cliente != "01":
+            continue
+        if fasce not in ("01", "03"):
+            continue
+        desc_lower = desc.lower()
+        name_lower = nome.lower()
+        renewable = (
+            "rinnovab" in desc_lower or "garanzie di origine" in desc_lower
+            or "garanzia di origine" in desc_lower or "certificati go" in desc_lower
+            or "verde" in name_lower or "green" in name_lower
+        )
+        energy_price = 0.0
+        fixed_annual = 0.0
+        fixed_includes_dispbt = False
+        for comp in offerta.findall("au:ComponenteImpresa", NS):
+            if comp.findtext("au:TIPOLOGIA", namespaces=NS) != "01":
+                continue
+            macroarea = comp.findtext("au:MACROAREA", namespaces=NS) or ""
+            comp_nome = (comp.findtext("au:NOME", namespaces=NS) or "").lower()
+            comp_desc = (comp.findtext("au:DESCRIZIONE", namespaces=NS) or "").lower()
+            intervals = comp.findall("au:IntervalloPrezzi", NS)
+            if macroarea in ("04", "06"):
+                pfas = {}
+                for iv in intervals:
+                    fascia = iv.findtext("au:FASCIA_COMPONENTE", namespaces=NS) or "00"
+                    prezzo = float(iv.findtext("au:PREZZO", namespaces=NS) or 0)
+                    unita  = iv.findtext("au:UNITA_MISURA", namespaces=NS) or "03"
+                    if unita == "03":
+                        pfas[fascia] = prezzo
+                if "04" in pfas:
+                    energy_price = pfas["04"]
+                elif pfas:
+                    vals = list(pfas.values())
+                    if len(set(round(v, 6) for v in vals)) == 1:
+                        energy_price = vals[0]
+                    else:
+                        energy_price = sum(pfas.get(f, 0) * w for f, w in F_WEIGHTS.items())
+            elif macroarea == "01":
+                for iv in intervals:
+                    prezzo = float(iv.findtext("au:PREZZO", namespaces=NS) or 0)
+                    unita  = iv.findtext("au:UNITA_MISURA", namespaces=NS) or "01"
+                    if unita == "01":
+                        fixed_annual += prezzo
+                    elif unita == "02":
+                        fixed_annual += prezzo * 12
+                if "dispbt" in comp_nome or "dispbt" in comp_desc or "dispacciament" in comp_desc:
+                    fixed_includes_dispbt = True
+        if energy_price == 0.0:
+            continue
+        records.append({
+            "date": dt, "competitor": COMPETITORS[piva], "nome": nome,
+            "energy_price": energy_price, "fixed_annual": fixed_annual,
+            "fixed_includes_dispbt": fixed_includes_dispbt,
+            "renewable": renewable, "limitante": limitante, "fasce": fasce,
+        })
+    return records
+
+
+@st.cache_data(show_spinner="Caricamento storico prezzi…")
+def load_price_history() -> pd.DataFrame:
+    precomputed_path = DATA_DIR / "price_history_precomputed.csv"
+    cache_cutoff = None
+    frames = []
+
+    # Load pre-computed CSV covering historical backfill data
+    if precomputed_path.exists():
+        pre = pd.read_csv(precomputed_path, parse_dates=["date"])
+        pre["date"] = pre["date"].dt.date
+        pre["fixed_includes_dispbt"] = pre["fixed_includes_dispbt"].astype(bool)
+        frames.append(pre)
+        if not pre.empty:
+            cache_cutoff = pre["date"].max()
+
+    # Load any XML files for dates strictly after the pre-computed cutoff
+>>>>>>> 0d467473860a78503eeb18e518984967f4f0ee29
     records = []
     try:
         root = ET.parse(xml_path).getroot()
@@ -651,7 +744,11 @@ def load_price_history(commodity: str, price_type: str) -> pd.DataFrame:
             continue
         if cache_cutoff is not None and dt <= cache_cutoff:
             continue
+<<<<<<< HEAD
         records.extend(_parse_xml_for_history(xml_path, dt, commodity, price_type))
+=======
+        records.extend(_parse_xml_for_history(xml_path, dt))
+>>>>>>> 0d467473860a78503eeb18e518984967f4f0ee29
 
     if records:
         frames.append(pd.DataFrame(records))
@@ -1135,6 +1232,7 @@ with tab4:
 
     # ── Build context from current data ───────────────────────────────────────
     def _build_context() -> str:
+<<<<<<< HEAD
         usage_unit = "kWh/yr" if commodity == "power" else "Smc/yr"
         price_unit = "c€/kWh" if commodity == "power" else "€/Smc"
         lines = [f"## Current offers — {selected_date.strftime('%d/%m/%Y')} ({consumption} {usage_unit}, {power} kW)\n"]
@@ -1150,6 +1248,19 @@ with tab4:
             )
 
         hist = load_price_history(commodity, price_type)
+=======
+        lines = [f"## Current offers — {selected_date.strftime('%d/%m/%Y')} ({consumption} kWh/yr, {power} kW)\n"]
+        lines.append("| Supplier | Offer | Energy price (c€/kWh) | Annual bill (€) | Renewable |")
+        lines.append("|---|---|---|---|---|")
+        for _, r in df_best.iterrows():
+            ren = "♻ Yes" if r["renewable"] else "No"
+            lines.append(
+                f"| {r['competitor']} | {r['nome'][:40]} "
+                f"| {r['energy_price']*100:.3f} | {r['total']:.0f} | {ren} |"
+            )
+
+        hist = load_price_history()
+>>>>>>> 0d467473860a78503eeb18e518984967f4f0ee29
         if not hist.empty:
             from datetime import timedelta as _td
             cutoff = selected_date - _td(days=60)
@@ -1160,12 +1271,17 @@ with tab4:
                                        ascending=[True, True, False, True])
                     .groupby(["date", "competitor"], as_index=False).first()
                 )
+<<<<<<< HEAD
                 if commodity == "power":
                     pivot = weekly.pivot(index="date", columns="competitor", values="energy_price") * 100
                     lines.append(f"\n## Energy price history — last 60 days (c€/kWh)\n")
                 else:
                     pivot = weekly.pivot(index="date", columns="competitor", values="energy_price")
                     lines.append(f"\n## Energy price history — last 60 days (€/Smc)\n")
+=======
+                pivot = weekly.pivot(index="date", columns="competitor", values="energy_price") * 100
+                lines.append(f"\n## Energy price history — last 60 days (c€/kWh)\n")
+>>>>>>> 0d467473860a78503eeb18e518984967f4f0ee29
                 lines.append(pivot.to_string(float_format=lambda x: f"{x:.3f}"))
 
         lines.append(f"\n## Regulated parameters (latest)\n")
