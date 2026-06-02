@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(python -m streamlit --version 2>&1)",
+      "PowerShell(pip show streamlit 2>&1)",
+      "PowerShell(ls \"C:\\\\Users\\\\HIA415\\\\Sandbox\\\\energy price\\\\\")",
+      "PowerShell(python -c \"print\\('hello'\\)\" 2>&1)",
+      "PowerShell(cd \"C:\\\\Users\\\\HIA415\\\\Sandbox\"; \\(Get-Command streamlit -ErrorAction SilentlyContinue\\).Source; python -m streamlit --version 2>&1 | Select-Object -First 2)",
+      "PowerShell($ProgressPreference = 'SilentlyContinue'; $r = Invoke-WebRequest \"http://localhost:8502\" -UseBasicParsing -TimeoutSec 10; Write-Host \"HTTP Status:\" $r.StatusCode; Write-Host \"Content length:\" $r.Content.Length)",
+      "PowerShell($ProgressPreference = 'SilentlyContinue'; $r = Invoke-WebRequest \"http://localhost:8502\" -UseBasicParsing -TimeoutSec 10; \"HTTP $\\($r.StatusCode\\) — content length: $\\($r.Content.Length\\) bytes\")",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8502 -ErrorAction SilentlyContinue)",
+      "PowerShell(Start-Sleep -Seconds 4; \\(Invoke-WebRequest -Uri \"http://localhost:8502\" -TimeoutSec 5 -UseBasicParsing\\).StatusCode)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\GitHubDesktop\\\\bin\\\\github.bat\" --version 2>&1; $env:PATH)",
+      "PowerShell(cmd /c \"dir C:\\\\Users\\\\HIA415\\\\AppData\\\\Local\\\\GitHubDesktop /AL\")",
+      "PowerShell(cmd /c \"dir C:\\\\Users\\\\HIA415\\\\AppData\\\\Local\\\\GitHubDesktop\")",
+      "PowerShell(cmd /c \"dir C:\\\\Users\\\\HIA415\\\\AppData\\\\Local\\\\GitHubDesktop\\\\app-3.5.8\\\\resources\\\\app\\\\git\\\\cmd\")"
+    ]
+  }
+}

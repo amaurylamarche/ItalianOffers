@@ -20,6 +20,14 @@ A Streamlit dashboard that compares fixed-price electricity offers from major It
 
 Both files are published daily by ARERA / Acquirente Unico and stored in `energy price/`.
 
+## Automation Reliability
+
+The daily downloader workflow (`.github/workflows/download_daily.yml`) includes:
+
+- concurrency control to avoid overlapping runs on the same branch;
+- retry-safe git push logic (`fetch` + `pull --rebase` + retry);
+- a GitHub Actions step summary reporting XML/CSV download status.
+
 ## Getting Started
 
 ### Prerequisites
@@ -50,6 +58,43 @@ ngrok http 8501
 ```
 
 Share the generated `https://*.ngrok-free.app` URL — no setup needed on the colleague's side.
+
+## Production Deployment
+
+### Option A — Streamlit Cloud (fastest)
+
+1. Push this repo to GitHub.
+2. In Streamlit Cloud, create a new app pointing to:
+      - Repository: this project
+      - Branch: `main`
+      - Main file: `italianprices.py`
+3. Add secrets in Streamlit Cloud (App settings → Secrets), for example:
+      - `ANTHROPIC_API_KEY`
+4. Deploy. Every push to `main` triggers an automatic redeploy.
+
+### Option B — Container deployment (production-grade)
+
+This repository now includes:
+
+- `Dockerfile`
+- `.dockerignore`
+- `.streamlit/config.toml`
+- `.github/workflows/deploy_container.yml`
+
+The workflow builds and publishes the image to GHCR:
+
+- `ghcr.io/<github_org_or_user>/italianoffers:latest`
+
+Run locally with Docker:
+
+```bash
+docker build -t italianoffers:local .
+docker run --rm -p 8501:8501 italianoffers:local
+```
+
+Then open `http://localhost:8501`.
+
+You can deploy the same image to Azure Container Apps, AWS ECS/Fargate, GCP Cloud Run, or any Kubernetes cluster.
 
 ## Methodology
 

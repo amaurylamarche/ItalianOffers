@@ -1,0 +1,17 @@
+.git
+.github
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.out
+*.err
+test.py.code-workspace
+streamlit_out*.txt
+streamlit_err*.txt
+backfill_out.txt
+backfill_err.txt
+st_out.txt
+st_err.txt

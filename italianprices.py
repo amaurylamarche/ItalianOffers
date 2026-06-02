@@ -53,6 +53,27 @@ COLORS = {
 # F1/F2/F3 typical consumption weights for trioraria → effective monoraria price
 F_WEIGHTS = {"01": 0.44, "02": 0.21, "03": 0.35}
 
+COMMODITY_CONFIG = {
+    "power": {
+        "offer_prefix": "PO_Offerte_E_MLIBERO_",
+        "params_prefix": "PO_Parametri_Mercato_Libero_E_",
+        "energy_units": {"03"},
+        "caption_unit": "c€/kWh",
+    },
+    "gas": {
+        "offer_prefix": "PO_Offerte_G_MLIBERO_",
+        "params_prefix": "PO_Parametri_Mercato_Libero_G_",
+        "energy_units": {"04"},
+        "caption_unit": "€/Smc",
+    },
+}
+
+PRICE_TYPE_CODE = {
+    "all": None,
+    "fixed": "01",
+    "indexed": "02",
+}
+
 # ── Translations ──────────────────────────────────────────────────────────────
 TRANSLATIONS = {
     "it": {
@@ -61,9 +82,18 @@ TRANSLATIONS = {
         "app_caption":          "Offerte a prezzo fisso · Monoraria · Mercato libero italiano — fonte: ARERA Portale Offerte",
         "sidebar_date_header":  "Data offerte",
         "sidebar_date_select":  "Seleziona data",
+        "sidebar_commodity":    "Commodity",
+        "sidebar_commodity_power":"Power",
+        "sidebar_commodity_gas": "Gas",
+        "sidebar_price_type":   "Tipo prezzo",
+        "sidebar_price_all":    "Tutti",
+        "sidebar_price_fixed":  "Fisso",
+        "sidebar_price_indexed": "Indicizzato",
         "sidebar_params_header":"Parametri di consumo",
         "sidebar_kwh_slider":   "Consumo annuale (kWh)",
         "sidebar_kwh_help":     "Consumo domestico tipico: 1000–3000 kWh/anno",
+        "sidebar_smc_slider":   "Consumo annuale gas (Smc)",
+        "sidebar_smc_help":     "Consumo domestico tipico gas: 700–1400 Smc/anno",
         "sidebar_power_radio":  "Potenza contrattuale (kW)",
         "sidebar_filters":      "Filtri",
         "sidebar_renewable":    "Solo offerte rinnovabili ♻",
@@ -154,9 +184,18 @@ TRANSLATIONS = {
         "app_caption":          "Fixed-price offers · Single-rate · Italian free market — source: ARERA Portale Offerte",
         "sidebar_date_header":  "Offer date",
         "sidebar_date_select":  "Select date",
+        "sidebar_commodity":    "Commodity",
+        "sidebar_commodity_power":"Power",
+        "sidebar_commodity_gas": "Gas",
+        "sidebar_price_type":   "Price type",
+        "sidebar_price_all":    "All",
+        "sidebar_price_fixed":  "Fixed",
+        "sidebar_price_indexed": "Indexed",
         "sidebar_params_header":"Consumption parameters",
         "sidebar_kwh_slider":   "Annual consumption (kWh)",
         "sidebar_kwh_help":     "Typical household: 1,000–3,000 kWh/year",
+        "sidebar_smc_slider":   "Annual gas consumption (Smc)",
+        "sidebar_smc_help":     "Typical household gas: 700–1400 Smc/year",
         "sidebar_power_radio":  "Contract power (kW)",
         "sidebar_filters":      "Filters",
         "sidebar_renewable":    "Renewable offers only ♻",
@@ -250,10 +289,11 @@ def t(key: str) -> str:
 # ── Data loading ──────────────────────────────────────────────────────────────
 from datetime import date as _date, datetime as _dt
 
-def _available_dates() -> list[_date]:
+def _available_dates(commodity: str) -> list[_date]:
     """Return sorted list of dates for which an XML offer file exists."""
+    offer_prefix = COMMODITY_CONFIG[commodity]["offer_prefix"]
     dates = []
-    for f in DATA_DIR.glob("PO_Offerte_E_MLIBERO_*.xml"):
+    for f in DATA_DIR.glob(f"{offer_prefix}*.xml"):
         m = re.search(r"(\d{8})", f.stem)
         if m:
             try:
@@ -276,8 +316,9 @@ def _file_for_date(pattern_prefix: str, extension: str, target: _date) -> Path |
 
 
 @st.cache_data(show_spinner="Caricamento dati ARERA…")
-def load_params(target_date: _date) -> dict:
-    csv_path = _file_for_date("PO_Parametri_Mercato_Libero_E_", ".csv", target_date)
+def load_params(target_date: _date, commodity: str) -> dict:
+    params_prefix = COMMODITY_CONFIG[commodity]["params_prefix"]
+    csv_path = _file_for_date(params_prefix, ".csv", target_date)
     if csv_path is None:
         return {}
     df = pd.read_csv(csv_path)
@@ -285,8 +326,10 @@ def load_params(target_date: _date) -> dict:
 
 
 @st.cache_data(show_spinner="Parsing offerte…")
-def load_offers(target_date: _date) -> list[dict]:
-    xml_path = _file_for_date("PO_Offerte_E_MLIBERO_", ".xml", target_date)
+def load_offers(target_date: _date, commodity: str, price_type: str) -> list[dict]:
+    offer_prefix = COMMODITY_CONFIG[commodity]["offer_prefix"]
+    energy_units = COMMODITY_CONFIG[commodity]["energy_units"]
+    xml_path = _file_for_date(offer_prefix, ".xml", target_date)
     if xml_path is None:
         return []
 
@@ -309,9 +352,13 @@ def load_offers(target_date: _date) -> list[dict]:
         url_offerta   = offerta.findtext("au:DettaglioOfferta/au:Contatti/au:URL_OFFERTA", namespaces=NS) or ""
         durata        = offerta.findtext("au:DettaglioOfferta/au:DURATA",        namespaces=NS) or "-1"
 
-        if tipo_offerta != "01" or tipo_cliente != "01":
+        selected_price_code = PRICE_TYPE_CODE.get(price_type)
+
+        if tipo_cliente != "01":
             continue
-        if fasce not in ("01", "03"):
+        if selected_price_code is not None and tipo_offerta != selected_price_code:
+            continue
+        if commodity == "power" and fasce not in ("01", "03"):
             continue
 
         desc_lower = desc.lower()
@@ -345,7 +392,7 @@ def load_offers(target_date: _date) -> list[dict]:
                     fascia = iv.findtext("au:FASCIA_COMPONENTE", namespaces=NS) or "00"
                     prezzo = float(iv.findtext("au:PREZZO", namespaces=NS) or 0)
                     unita  = iv.findtext("au:UNITA_MISURA",  namespaces=NS) or "03"
-                    if unita == "03":
+                    if unita in energy_units:
                         prices_by_fascia[fascia] = prezzo
 
                 if "04" in prices_by_fascia:
@@ -355,11 +402,14 @@ def load_offers(target_date: _date) -> list[dict]:
                     if len(set(round(v, 6) for v in vals)) == 1:
                         energy_price = vals[0]
                     else:
-                        is_mono = False
-                        energy_price = sum(
-                            prices_by_fascia.get(f, 0) * w
-                            for f, w in F_WEIGHTS.items()
-                        )
+                        if commodity == "power":
+                            is_mono = False
+                            energy_price = sum(
+                                prices_by_fascia.get(f, 0) * w
+                                for f, w in F_WEIGHTS.items()
+                            )
+                        else:
+                            energy_price = vals[0]
 
             elif macroarea == "01":
                 for iv in intervals:
@@ -377,6 +427,8 @@ def load_offers(target_date: _date) -> list[dict]:
 
         offers.append({
             "competitor": COMPETITORS[piva],
+            "commodity": commodity,
+            "price_type": tipo_offerta,
             "nome": nome,
             "desc": desc,
             "url": url_offerta,
@@ -395,17 +447,43 @@ def load_offers(target_date: _date) -> list[dict]:
 
 
 # ── Bill calculation ──────────────────────────────────────────────────────────
-def calculate_bill(offer: dict, consumption: float, power: float, params: dict) -> dict:
+def calculate_bill(offer: dict, consumption: float, power: float, params: dict, commodity: str) -> dict:
     p = params
 
     energy_cost   = offer["energy_price"] * consumption
     fixed_cost    = offer["fixed_annual"]
-    cdispd_var    = float(p.get("cdispd", 0.016988)) * consumption
 
-    if not offer.get("fixed_includes_dispbt", False):
-        dispbt_fixed = float(p.get("dispbt_d", 1.2311)) * power * 12
-    else:
+    if commodity == "gas":
+        subtotal = energy_cost + fixed_cost
+        iva_rate = float(p.get("iva_c", 0.10))
+        iva = subtotal * iva_rate
+        total = subtotal + iva
+        return {
+            "total": total,
+            "energy_net": energy_cost,
+            "fixed_net": fixed_cost,
+            "dispbt_net": 0.0,
+            "cdispd_net": 0.0,
+            "transport_net": 0.0,
+            "system_net": 0.0,
+            "accisa": 0.0,
+            "iva": iva,
+        }
+
+
+    # disp_type 99 = supplier has already bundled CdispD (and DISPbt) into the
+    # quoted energy price.  Adding them again would double-count.
+    disp_bundled = offer.get("disp_type", "") == "99"
+
+    if disp_bundled:
+        cdispd_var   = 0.0
         dispbt_fixed = 0.0
+    else:
+        cdispd_var   = float(p.get("cdispd", 0.016988)) * consumption
+        if not offer.get("fixed_includes_dispbt", False):
+            dispbt_fixed = float(p.get("dispbt_d", 1.2311)) * power * 12
+        else:
+            dispbt_fixed = 0.0
 
     seller_total  = energy_cost + fixed_cost + cdispd_var + dispbt_fixed
 
@@ -421,10 +499,19 @@ def calculate_bill(offer: dict, consumption: float, power: float, params: dict) 
     uc3    = float(p.get("uc3",      0.002760))
     uc6p   = float(p.get("uc6p_d",   0.000070))
     uc6s   = float(p.get("uc6s_d",   0.1988))
-    cpstgd = float(p.get("cpstgd",   0.000560))
+    cpstgd = float(p.get("cpstgd",   0.002140))
     csed   = float(p.get("csed",     0.000560))
     rst    = float(p.get("rst",      0.000572))
-    system = (asos + arim + uc3 + uc6p + cpstgd + csed + rst) * consumption + uc6s * power
+    terna  = float(p.get("terna",    0.000717))
+    msd    = float(p.get("msd",      0.003722))
+    interr = float(p.get("interr",   0.001351))
+    modeol = float(p.get("modeol",   0.002394))
+    # cpty_mrkt: use annual average of the three monthly values when present
+    cpty_1 = float(p.get("cpty_mrkt_1", p.get("cpty_mrkt_mt", 0.005589)))
+    cpty_2 = float(p.get("cpty_mrkt_2", p.get("cpty_mrkt_mt", 0.005589)))
+    cpty_3 = float(p.get("cpty_mrkt_3", p.get("cpty_mrkt_mt", 0.005589)))
+    cpty   = (cpty_1 + cpty_2 + cpty_3) / 3
+    system = (asos + arim + uc3 + uc6p + cpstgd + csed + rst + terna + msd + interr + modeol + cpty) * consumption + uc6s * power
 
     if power <= 3.0:
         taxable = max(0.0, consumption - 1800.0)
@@ -451,7 +538,8 @@ def calculate_bill(offer: dict, consumption: float, power: float, params: dict) 
 
 
 # ── Price history (all dates) ─────────────────────────────────────────────────
-def _parse_xml_for_history(xml_path: Path, dt) -> list[dict]:
+def _parse_xml_for_history(xml_path: Path, dt, commodity: str, price_type: str) -> list[dict]:
+    energy_units = COMMODITY_CONFIG[commodity]["energy_units"]
     records = []
     try:
         root = ET.parse(xml_path).getroot()
@@ -465,11 +553,15 @@ def _parse_xml_for_history(xml_path: Path, dt) -> list[dict]:
         tipo_cliente = offerta.findtext("au:DettaglioOfferta/au:TIPO_CLIENTE", namespaces=NS)
         fasce        = offerta.findtext("au:TipoPrezzo/au:TIPOLOGIA_FASCE", namespaces=NS)
         limitante    = offerta.findtext("au:CondizioniContrattuali/au:LIMITANTE", namespaces=NS) or "02"
+        disp_type    = offerta.findtext("au:Dispacciamento/au:TIPO_DISPACCIAMENTO", namespaces=NS) or ""
         nome         = offerta.findtext("au:DettaglioOfferta/au:NOME_OFFERTA", namespaces=NS) or ""
         desc         = offerta.findtext("au:DettaglioOfferta/au:DESCRIZIONE", namespaces=NS) or ""
-        if tipo_offerta != "01" or tipo_cliente != "01":
+        selected_price_code = PRICE_TYPE_CODE.get(price_type)
+        if tipo_cliente != "01":
             continue
-        if fasce not in ("01", "03"):
+        if selected_price_code is not None and tipo_offerta != selected_price_code:
+            continue
+        if commodity == "power" and fasce not in ("01", "03"):
             continue
         desc_lower = desc.lower()
         name_lower = nome.lower()
@@ -494,7 +586,7 @@ def _parse_xml_for_history(xml_path: Path, dt) -> list[dict]:
                     fascia = iv.findtext("au:FASCIA_COMPONENTE", namespaces=NS) or "00"
                     prezzo = float(iv.findtext("au:PREZZO", namespaces=NS) or 0)
                     unita  = iv.findtext("au:UNITA_MISURA", namespaces=NS) or "03"
-                    if unita == "03":
+                    if unita in energy_units:
                         pfas[fascia] = prezzo
                 if "04" in pfas:
                     energy_price = pfas["04"]
@@ -503,7 +595,10 @@ def _parse_xml_for_history(xml_path: Path, dt) -> list[dict]:
                     if len(set(round(v, 6) for v in vals)) == 1:
                         energy_price = vals[0]
                     else:
-                        energy_price = sum(pfas.get(f, 0) * w for f, w in F_WEIGHTS.items())
+                        if commodity == "power":
+                            energy_price = sum(pfas.get(f, 0) * w for f, w in F_WEIGHTS.items())
+                        else:
+                            energy_price = vals[0]
             elif macroarea == "01":
                 for iv in intervals:
                     prezzo = float(iv.findtext("au:PREZZO", namespaces=NS) or 0)
@@ -520,19 +615,23 @@ def _parse_xml_for_history(xml_path: Path, dt) -> list[dict]:
             "date": dt, "competitor": COMPETITORS[piva], "nome": nome,
             "energy_price": energy_price, "fixed_annual": fixed_annual,
             "fixed_includes_dispbt": fixed_includes_dispbt,
+            "disp_type": disp_type,
+            "commodity": commodity,
+            "price_type": tipo_offerta,
             "renewable": renewable, "limitante": limitante, "fasce": fasce,
         })
     return records
 
 
 @st.cache_data(show_spinner="Caricamento storico prezzi…")
-def load_price_history() -> pd.DataFrame:
+def load_price_history(commodity: str, price_type: str) -> pd.DataFrame:
+    offer_prefix = COMMODITY_CONFIG[commodity]["offer_prefix"]
     precomputed_path = DATA_DIR / "price_history_precomputed.csv"
     cache_cutoff = None
     frames = []
 
     # Load pre-computed CSV covering historical backfill data
-    if precomputed_path.exists():
+    if commodity == "power" and price_type == "fixed" and precomputed_path.exists():
         pre = pd.read_csv(precomputed_path, parse_dates=["date"])
         pre["date"] = pre["date"].dt.date
         pre["fixed_includes_dispbt"] = pre["fixed_includes_dispbt"].astype(bool)
@@ -542,7 +641,7 @@ def load_price_history() -> pd.DataFrame:
 
     # Load any XML files for dates strictly after the pre-computed cutoff
     records = []
-    for xml_path in sorted(DATA_DIR.glob("PO_Offerte_E_MLIBERO_*.xml")):
+    for xml_path in sorted(DATA_DIR.glob(f"{offer_prefix}*.xml")):
         m = re.search(r"(\d{8})", xml_path.stem)
         if not m:
             continue
@@ -552,7 +651,7 @@ def load_price_history() -> pd.DataFrame:
             continue
         if cache_cutoff is not None and dt <= cache_cutoff:
             continue
-        records.extend(_parse_xml_for_history(xml_path, dt))
+        records.extend(_parse_xml_for_history(xml_path, dt, commodity, price_type))
 
     if records:
         frames.append(pd.DataFrame(records))
@@ -582,16 +681,21 @@ def _ref_prices(hist_df: pd.DataFrame, ref_date, show_limited: bool, prefer_rene
     return dict(zip(best["competitor"], best["energy_price"]))
 
 
-def _fmt_change(current_ep: float, ref: dict, comp: str) -> str:
+def _fmt_change(current_ep: float, ref: dict, comp: str, commodity: str) -> str:
     """Format a price change badge relative to a reference price dict."""
     ref_ep = ref.get(comp)
     if ref_ep is None:
         return t("no_ref_data")
-    delta = (current_ep - ref_ep) * 100   # c€/kWh
+    if commodity == "power":
+        delta = (current_ep - ref_ep) * 100
+        suffix = "c"
+    else:
+        delta = current_ep - ref_ep
+        suffix = "€"
     if abs(delta) < 0.001:
         return t("price_flat")
     arrow = t("price_up") if delta > 0 else t("price_down")
-    return f"{arrow} {abs(delta):.2f}c"
+    return f"{arrow} {abs(delta):.2f}{suffix}"
 
 
 # ── Language state ────────────────────────────────────────────────────────────
@@ -603,13 +707,43 @@ st.title(t("app_title"))
 st.caption(t("app_caption"))
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
-all_dates = _available_dates()
+commodity = "power"
+price_type = "fixed"
+all_dates = []
 
 with st.sidebar:
     # Language toggle — always at the top
     if st.button(t("lang_button"), use_container_width=True):
         st.session_state.lang = "en" if st.session_state.lang == "it" else "it"
         st.rerun()
+
+    st.divider()
+    st.header(t("sidebar_filters"))
+
+    commodity_label = st.radio(
+        t("sidebar_commodity"),
+        options=[t("sidebar_commodity_power"), t("sidebar_commodity_gas")],
+        index=0,
+        horizontal=True,
+    )
+    commodity = "power" if commodity_label == t("sidebar_commodity_power") else "gas"
+
+    price_type_label = st.radio(
+        t("sidebar_price_type"),
+        options=[t("sidebar_price_all"), t("sidebar_price_fixed"), t("sidebar_price_indexed")],
+        index=1,
+        horizontal=True,
+    )
+    price_type = {
+        t("sidebar_price_all"): "all",
+        t("sidebar_price_fixed"): "fixed",
+        t("sidebar_price_indexed"): "indexed",
+    }[price_type_label]
+
+    all_dates = _available_dates(commodity)
+    if not all_dates:
+        st.error(t("err_no_offers"))
+        st.stop()
 
     st.divider()
     st.header(t("sidebar_date_header"))
@@ -623,36 +757,44 @@ with st.sidebar:
     st.divider()
     st.header(t("sidebar_params_header"))
 
-    consumption = st.slider(
-        t("sidebar_kwh_slider"),
-        min_value=500,
-        max_value=5000,
-        value=2000,
-        step=100,
-        help=t("sidebar_kwh_help"),
-    )
-
-    power = st.radio(
-        t("sidebar_power_radio"),
-        options=[3, 6, 9],
-        index=0,
-        horizontal=True,
-    )
+    if commodity == "power":
+        consumption = st.slider(
+            t("sidebar_kwh_slider"),
+            min_value=500,
+            max_value=5000,
+            value=2000,
+            step=100,
+            help=t("sidebar_kwh_help"),
+        )
+        power = st.radio(
+            t("sidebar_power_radio"),
+            options=[3, 6, 9],
+            index=0,
+            horizontal=True,
+        )
+    else:
+        consumption = st.slider(
+            t("sidebar_smc_slider"),
+            min_value=200,
+            max_value=4000,
+            value=1200,
+            step=50,
+            help=t("sidebar_smc_help"),
+        )
+        power = 3
 
     st.divider()
-    st.header(t("sidebar_filters"))
-
-    renewable_filter = st.toggle(t("sidebar_renewable"), value=True)
+    renewable_filter = commodity == "power" and st.toggle(t("sidebar_renewable"), value=True)
     show_limited = st.toggle(t("sidebar_limited"), value=False,
                              help=t("sidebar_limited_help"))
 
     st.divider()
-    xml_used = _file_for_date("PO_Offerte_E_MLIBERO_", ".xml", selected_date)
+    xml_used = _file_for_date(COMMODITY_CONFIG[commodity]["offer_prefix"], ".xml", selected_date)
     st.caption(f"File: {xml_used.name if xml_used else 'N/A'}")
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-params = load_params(selected_date)
-all_offers = load_offers(selected_date)
+params = load_params(selected_date, commodity)
+all_offers = load_offers(selected_date, commodity, price_type)
 
 if not all_offers:
     st.error(t("err_no_offers"))
@@ -679,7 +821,7 @@ if not show_limited:
 # ── Compute bills ─────────────────────────────────────────────────────────────
 rows = []
 for offer in filtered:
-    bill = calculate_bill(offer, float(consumption), float(power), params)
+    bill = calculate_bill(offer, float(consumption), float(power), params, commodity)
     rows.append({**offer, **bill})
 
 df = pd.DataFrame(rows)
@@ -695,7 +837,10 @@ df_best = (
 )
 
 # ── KPI cards ─────────────────────────────────────────────────────────────────
-st.subheader(t("kpi_subheader").format(consumption=consumption, power=power))
+if commodity == "power":
+    st.subheader(t("kpi_subheader").format(consumption=consumption, power=power))
+else:
+    st.subheader(f"Bolletta annua stimata — {consumption:,} Smc/anno")
 
 cols = st.columns(len(df_best))
 for col, (_, row) in zip(cols, df_best.iterrows()):
@@ -763,14 +908,17 @@ with tab1:
 
     # Price change vs last week / last month
     from datetime import timedelta
-    _hist = load_price_history()
+    _hist = load_price_history(commodity, price_type)
     _week_ref  = _ref_prices(_hist, selected_date - timedelta(days=7),  show_limited, renewable_filter)
     _month_ref = _ref_prices(_hist, selected_date - timedelta(days=30), show_limited, renewable_filter)
-    display_df["vs_week"]  = display_df.apply(lambda r: _fmt_change(r["energy_price"], _week_ref,  r["competitor"]), axis=1)
-    display_df["vs_month"] = display_df.apply(lambda r: _fmt_change(r["energy_price"], _month_ref, r["competitor"]), axis=1)
+    display_df["vs_week"]  = display_df.apply(lambda r: _fmt_change(r["energy_price"], _week_ref,  r["competitor"], commodity), axis=1)
+    display_df["vs_month"] = display_df.apply(lambda r: _fmt_change(r["energy_price"], _month_ref, r["competitor"], commodity), axis=1)
 
     ann = t("annual_suffix")
-    display_df["energy_price"] = display_df["energy_price"].map(lambda x: f"{x*100:.3f} c€/kWh")
+    if commodity == "power":
+        display_df["energy_price"] = display_df["energy_price"].map(lambda x: f"{x*100:.3f} c€/kWh")
+    else:
+        display_df["energy_price"] = display_df["energy_price"].map(lambda x: f"€{x:.4f}/Smc")
     display_df["fixed_annual"]  = display_df["fixed_annual"].map(lambda x: f"€{x:.0f}{ann}")
     display_df["total"]         = display_df["total"].map(lambda x: f"€{x:.0f}")
     display_df["renewable"]     = display_df["renewable"].map(lambda x: t("renewable_yes") if x else t("renewable_no"))
@@ -819,7 +967,10 @@ with tab2:
     df_all_disp = df_all[
         ["competitor", "nome", "energy_price", "fixed_annual", "total", "renewable", "limitante", "durata", "url"]
     ].copy()
-    df_all_disp["energy_price"] = df_all_disp["energy_price"].map(lambda x: f"{x*100:.3f} c€/kWh")
+    if commodity == "power":
+        df_all_disp["energy_price"] = df_all_disp["energy_price"].map(lambda x: f"{x*100:.3f} c€/kWh")
+    else:
+        df_all_disp["energy_price"] = df_all_disp["energy_price"].map(lambda x: f"€{x:.4f}/Smc")
     df_all_disp["fixed_annual"]  = df_all_disp["fixed_annual"].map(lambda x: f"€{x:.0f}{ann}")
     df_all_disp["total"]         = df_all_disp["total"].map(lambda x: f"€{x:.0f}")
     df_all_disp["renewable"]     = df_all_disp["renewable"].map(lambda x: "♻" if x else "❌")
@@ -854,7 +1005,7 @@ with tab3:
                 key="hist_end",
             )
 
-    hist_raw = load_price_history()
+    hist_raw = load_price_history(commodity, price_type)
 
     if hist_raw.empty:
         st.info(t("hist_no_data"))
@@ -903,17 +1054,24 @@ with tab3:
                             "energy_price":          r["energy_price"],
                             "fixed_annual":          r["fixed_annual"],
                             "fixed_includes_dispbt": r["fixed_includes_dispbt"],
+                            "disp_type":             r.get("disp_type", ""),
                         }
-                        b = calculate_bill(offer_dict, float(consumption), float(power), params)
+                        b = calculate_bill(offer_dict, float(consumption), float(power), params, commodity)
                         y_vals.append(b["total"])
                     y_label = t("hist_ylabel_bill")
                     y_fmt   = ".0f"
                     y_unit  = "€"
                 else:
-                    y_vals  = (sub["energy_price"] * 100).tolist()
-                    y_label = t("hist_ylabel_price")
-                    y_fmt   = ".3f"
-                    y_unit  = " c€/kWh"
+                    if commodity == "power":
+                        y_vals  = (sub["energy_price"] * 100).tolist()
+                        y_label = t("hist_ylabel_price")
+                        y_fmt   = ".3f"
+                        y_unit  = " c€/kWh"
+                    else:
+                        y_vals  = sub["energy_price"].tolist()
+                        y_label = "€/Smc"
+                        y_fmt   = ".4f"
+                        y_unit  = " €/Smc"
 
                 symbols = ["circle" if r else "circle-open" for r in sub["renewable"]]
                 names   = sub["nome"].str[:40].tolist()
@@ -951,7 +1109,10 @@ with tab3:
             latest_date = best_hist["date"].max()
             latest = best_hist[best_hist["date"] == latest_date].copy()
             ann = t("annual_suffix")
-            latest[t("col_energy_price2")] = latest["energy_price"].map(lambda x: f"{x*100:.3f} c€/kWh")
+            if commodity == "power":
+                latest[t("col_energy_price2")] = latest["energy_price"].map(lambda x: f"{x*100:.3f} c€/kWh")
+            else:
+                latest[t("col_energy_price2")] = latest["energy_price"].map(lambda x: f"€{x:.4f}/Smc")
             latest[t("col_fixed_fee2")]    = latest["fixed_annual"].map(lambda x: f"€{x:.0f}{ann}")
             latest[t("col_renewable2")]    = latest["renewable"].map(lambda x: "♻" if x else "○")
             latest[t("col_access2")]       = latest["limitante"].map(
@@ -974,17 +1135,21 @@ with tab4:
 
     # ── Build context from current data ───────────────────────────────────────
     def _build_context() -> str:
-        lines = [f"## Current offers — {selected_date.strftime('%d/%m/%Y')} ({consumption} kWh/yr, {power} kW)\n"]
-        lines.append("| Supplier | Offer | Energy price (c€/kWh) | Annual bill (€) | Renewable |")
+        usage_unit = "kWh/yr" if commodity == "power" else "Smc/yr"
+        price_unit = "c€/kWh" if commodity == "power" else "€/Smc"
+        lines = [f"## Current offers — {selected_date.strftime('%d/%m/%Y')} ({consumption} {usage_unit}, {power} kW)\n"]
+        lines.append(f"| Supplier | Offer | Energy price ({price_unit}) | Annual bill (€) | Renewable |")
         lines.append("|---|---|---|---|---|")
         for _, r in df_best.iterrows():
             ren = "♻ Yes" if r["renewable"] else "No"
+            price_value = f"{r['energy_price']*100:.3f}" if commodity == "power" else f"{r['energy_price']:.4f}"
             lines.append(
                 f"| {r['competitor']} | {r['nome'][:40]} "
-                f"| {r['energy_price']*100:.3f} | {r['total']:.0f} | {ren} |"
+                f"| {price_value} "
+                f"| {r['total']:.0f} | {ren} |"
             )
 
-        hist = load_price_history()
+        hist = load_price_history(commodity, price_type)
         if not hist.empty:
             from datetime import timedelta as _td
             cutoff = selected_date - _td(days=60)
@@ -995,8 +1160,12 @@ with tab4:
                                        ascending=[True, True, False, True])
                     .groupby(["date", "competitor"], as_index=False).first()
                 )
-                pivot = weekly.pivot(index="date", columns="competitor", values="energy_price") * 100
-                lines.append(f"\n## Energy price history — last 60 days (c€/kWh)\n")
+                if commodity == "power":
+                    pivot = weekly.pivot(index="date", columns="competitor", values="energy_price") * 100
+                    lines.append(f"\n## Energy price history — last 60 days (c€/kWh)\n")
+                else:
+                    pivot = weekly.pivot(index="date", columns="competitor", values="energy_price")
+                    lines.append(f"\n## Energy price history — last 60 days (€/Smc)\n")
                 lines.append(pivot.to_string(float_format=lambda x: f"{x:.3f}"))
 
         lines.append(f"\n## Regulated parameters (latest)\n")
