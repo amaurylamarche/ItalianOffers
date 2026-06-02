@@ -6,6 +6,10 @@ on:
     - cron: '0 10 * * *'  # noon CEST — retry if portal was slow to publish
   workflow_dispatch:       # allow manual trigger from GitHub UI
 
+concurrency:
+  group: daily-arera-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   download:
     runs-on: ubuntu-latest
@@ -13,7 +17,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Download today's XML and CSV from Portale Offerte
         run: |
@@ -21,20 +25,48 @@ jobs:
           YEAR=$(date +%Y)
           MONTH=$(date +%-m)   # no leading zero, e.g. 5 not 05
           BASE="https://www.ilportaleofferte.it/portaleOfferte/resources/opendata"
-
-          XML_URL="${BASE}/csv/offerteML/${YEAR}_${MONTH}/PO_Offerte_E_MLIBERO_${DATE}.xml"
-          CSV_URL="${BASE}/csv/parametriML/${YEAR}_${MONTH}/PO_Parametri_Mercato_Libero_E_${DATE}.csv"
           DEST="energy price"
 
-          echo "Downloading XML: $XML_URL"
-          curl -f -o "${DEST}/PO_Offerte_E_MLIBERO_${DATE}.xml" "$XML_URL" \
-            && echo "XML saved." \
-            || echo "WARNING: XML not yet available for $DATE"
+          mkdir -p "$DEST"
 
-          echo "Downloading CSV: $CSV_URL"
-          curl -f -o "${DEST}/PO_Parametri_Mercato_Libero_E_${DATE}.csv" "$CSV_URL" \
-            && echo "CSV saved." \
-            || echo "WARNING: CSV not yet available for $DATE"
+          E_XML_URL="${BASE}/csv/offerteML/${YEAR}_${MONTH}/PO_Offerte_E_MLIBERO_${DATE}.xml"
+          E_CSV_URL="${BASE}/csv/parametriML/${YEAR}_${MONTH}/PO_Parametri_Mercato_Libero_E_${DATE}.csv"
+          G_XML_URL="${BASE}/csv/offerteML/${YEAR}_${MONTH}/PO_Offerte_G_MLIBERO_${DATE}.xml"
+          G_CSV_URL="${BASE}/csv/parametriML/${YEAR}_${MONTH}/PO_Parametri_Mercato_Libero_G_${DATE}.csv"
+
+          E_XML_STATUS="not available"
+          E_CSV_STATUS="not available"
+          G_XML_STATUS="not available"
+          G_CSV_STATUS="not available"
+
+          echo "Downloading Power XML: $E_XML_URL"
+          curl -f -o "${DEST}/PO_Offerte_E_MLIBERO_${DATE}.xml" "$E_XML_URL" \
+            && E_XML_STATUS="downloaded" && echo "Power XML saved." \
+            || echo "WARNING: Power XML not yet available for $DATE"
+
+          echo "Downloading Power CSV: $E_CSV_URL"
+          curl -f -o "${DEST}/PO_Parametri_Mercato_Libero_E_${DATE}.csv" "$E_CSV_URL" \
+            && E_CSV_STATUS="downloaded" && echo "Power CSV saved." \
+            || echo "WARNING: Power CSV not yet available for $DATE"
+
+          echo "Downloading Gas XML: $G_XML_URL"
+          curl -f -o "${DEST}/PO_Offerte_G_MLIBERO_${DATE}.xml" "$G_XML_URL" \
+            && G_XML_STATUS="downloaded" && echo "Gas XML saved." \
+            || echo "WARNING: Gas XML not yet available for $DATE"
+
+          echo "Downloading Gas CSV: $G_CSV_URL"
+          curl -f -o "${DEST}/PO_Parametri_Mercato_Libero_G_${DATE}.csv" "$G_CSV_URL" \
+            && G_CSV_STATUS="downloaded" && echo "Gas CSV saved." \
+            || echo "WARNING: Gas CSV not yet available for $DATE"
+
+          {
+            echo "## ARERA daily download"
+            echo "- Date: $DATE"
+            echo "- Power XML: $E_XML_STATUS"
+            echo "- Power CSV: $E_CSV_STATUS"
+            echo "- Gas XML: $G_XML_STATUS"
+            echo "- Gas CSV: $G_CSV_STATUS"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit and push new files
         run: |
@@ -48,5 +80,7 @@ jobs:
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > last_updated.txt
             git add last_updated.txt
             git commit -m "Auto: ARERA data $(date +%Y-%m-%d)"
-            git push
+            git fetch origin "$GITHUB_REF_NAME"
+            git pull --rebase origin "$GITHUB_REF_NAME" || true
+            git push origin "HEAD:$GITHUB_REF_NAME" || (sleep 5; git pull --rebase origin "$GITHUB_REF_NAME"; git push origin "HEAD:$GITHUB_REF_NAME")
           fi
